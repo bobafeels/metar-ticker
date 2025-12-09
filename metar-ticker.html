@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Live METAR Ticker</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: black;
+      color: #00ff99;
+      font-family: Arial, sans-serif;
+      font-size: 28px;
+      white-space: nowrap;
+    }
+
+    .ticker {
+      display: inline-block;
+      padding-left: 100%;
+      animation: scroll 25s linear infinite;
+    }
+
+    @keyframes scroll {
+      from { transform: translateX(0%); }
+      to { transform: translateX(-100%); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="ticker" id="ticker">Loading METAR...</div>
+
+<script>
+  const station = "KAMW"; // <-- CHANGE THIS TO YOUR AIRPORT ICAO
+
+  async function fetchMETAR() {
+    try {
+      const url = `https://aviationweather.gov/api/data/metar?ids=${station}&format=json`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!data || data.length === 0) {
+        document.getElementById("ticker").textContent =
+          "METAR unavailable for " + station;
+        return;
+      }
+
+      const raw = data[0].rawOb;
+      const wind = data[0].wdir + "@" + data[0].wspd + "kt";
+      const vis = data[0].vis + "SM";
+      const temp = data[0].temp + "C";
+      const alt = data[0].altim;
+
+      const formatted =
+        `${station} | ${raw} | Wind: ${wind} | Vis: ${vis} | Temp: ${temp} | Alt: ${alt}`;
+
+      document.getElementById("ticker").textContent = formatted;
+
+    } catch (err) {
+      document.getElementById("ticker").textContent =
+        "Error loading METAR...";
+    }
+  }
+
+  fetchMETAR();
+  setInterval(fetchMETAR, 60000); // Refresh every 60 seconds
+</script>
+
+</body>
+</html>
