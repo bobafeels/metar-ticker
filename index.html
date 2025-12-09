@@ -1,70 +1,65 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Live METAR Ticker</title>
-  <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-      background: black;
-      color: #00ff99;
-      font-family: Arial, sans-serif;
-      font-size: 28px;
-      white-space: nowrap;
-    }
-
-    .ticker {
-      display: inline-block;
-      padding-left: 100%;
-      animation: scroll 25s linear infinite;
-    }
-
-    @keyframes scroll {
-      from { transform: translateX(0%); }
-      to { transform: translateX(-100%); }
-    }
-  </style>
-</head>
-<body>
-
-<div class="ticker" id="ticker">Loading METAR...</div>
-
 <script>
-  const station = "KAMW"; // <-- CHANGE THIS TO YOUR AIRPORT ICAO
+  // Use your ICAO here, e.g. KDEN, KLEX, etc.
+  const station = "KAMW"; // <-- CHANGE THIS
 
   async function fetchMETAR() {
     try {
-      const url = `https://aviationweather.gov/api/data/metar?ids=${station}&format=json`;
-      const response = await fetch(url);
-      const data = await response.json();
+      const url = `https://api.weather.gov/stations/${station}/observations/latest`;
 
-      if (!data || data.length === 0) {
-        document.getElementById("ticker").textContent =
-          "METAR unavailable for " + station;
-        return;
+      const response = await fetch(url, {
+        headers: {
+          "Accept": "application/geo+json"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error("HTTP " + response.status);
       }
 
-      const raw = data[0].rawOb;
-      const wind = data[0].wdir + "@" + data[0].wspd + "kt";
-      const vis = data[0].vis + "SM";
-      const temp = data[0].temp + "C";
-      const alt = data[0].altim;
+      const data = await response.json();
+      const props = data.properties || {};
+
+      const raw = props.rawMessage || `No raw METAR available for ${station}`;
+
+      // Values from api.weather.gov are in SI units:
+      // windSpeed: m/s, visibility: meters, temperature: °C, barometricPressure: Pa
+      const windSpeedMs = props.windSpeed && props.windSpeed.value;
+      const windDir = props.windDirection && props.windDirection.value;
+      const visMeters = props.visibility && props.visibility.value;
+      const tempC = props.temperature && props.temperature.value;
+      const pressurePa = props.barometricPressure && props.barometricPressure.value;
+
+      const windKts =
+        windSpeedMs != null ? (windSpeedMs * 1.94384).toFixed(0) : "N/A";
+      const windDirDeg =
+        windDir != null ? windDir.toFixed(0) : "VRB";
+      const visSm =
+        visMeters != null ? (visMeters / 1609.34).toFixed(1) : "N/A";
+      const tempStr =
+        tempC != null ? tempC.toFixed(1) + " °C" : "N/A";
+      const altInHg =
+        pressurePa != null ? (pressurePa / 3386.39).toFixed(2) : "N/A";
+
+      const timeStr = props.timestamp
+        ? new Date(props.timestamp).toUTCString()
+        : "";
 
       const formatted =
-        `${station} | ${raw} | Wind: ${wind} | Vis: ${vis} | Temp: ${temp} | Alt: ${alt}`;
+        `${station} | ${raw} ` +
+        `| Wind: ${windDirDeg}° @ ${windKts} kt ` +
+        `| Vis: ${visSm} SM ` +
+        `| Temp: ${tempStr} ` +
+        `| Alt: ${altInHg} inHg ` +
+        (timeStr ? `| Obs: ${timeStr}` : "");
 
       document.getElementById("ticker").textContent = formatted;
 
     } catch (err) {
       document.getElementById("ticker").textContent =
-        "Error loading METAR...";
+        "Error loading METAR: " + err.message;
     }
   }
 
   fetchMETAR();
-  setInterval(fetchMETAR, 60000); // Refresh every 60 seconds
+  setInterval(fetchMETAR, 60000); // refresh every 60 seconds
 </script>
-
-</body>
-</html>
