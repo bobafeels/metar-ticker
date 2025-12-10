@@ -57,63 +57,25 @@
 </div>
 
 <script>
-  const station = "KAMW";
-
-  function determineFlightCategory(ceilingFt, visibilitySm) {
-    if (ceilingFt == null && visibilitySm == null) return "UNK";
-    if (ceilingFt <= 500 || visibilitySm < 1) return "LIFR";
-    if (ceilingFt <= 1000 || visibilitySm < 3) return "IFR";
-    if (ceilingFt <= 3000 || visibilitySm < 5) return "MVFR";
-    return "VFR";
-  }
+  const station = "KAMW"; // ✅ Single airport forever
 
   async function fetchMETAR() {
     const tickerEl = document.getElementById("ticker");
 
     try {
-      const url = `https://api.weather.gov/stations/${station}/observations/latest`;
+      const url = `https://aviationweather.gov/api/data/metar?ids=${station}&format=json`;
 
-      const response = await fetch(url, {
-        mode: "cors",
-        headers: {
-          "Accept": "application/geo+json",
-          "User-Agent": "Yodeck-METAR-Ticker/1.0 (contact@example.com)" // ✅ REQUIRED BY NWS
-        }
-      });
-
+      const response = await fetch(url);
       if (!response.ok) throw new Error("HTTP " + response.status);
 
       const data = await response.json();
-      const props = data?.properties ?? {};
+      if (!data.length) throw new Error("No METAR data");
 
-      const raw = props.rawMessage;
+      const metar = data[0];
 
-      // ✅ If raw METAR is missing, DO NOT show fake LIFR
-      if (!raw) {
-        tickerEl.className = "ticker UNK";
-        tickerEl.textContent = "METAR temporarily unavailable";
-        return;
-      }
+      const raw = metar.rawOb;
+      const flightCat = metar.flightCat || "UNK";
 
-      // ✅ Ceiling extraction
-      let ceilingFt = null;
-      if (props.cloudLayers?.length) {
-        for (const layer of props.cloudLayers) {
-          if (["BKN", "OVC", "VV"].includes(layer.amount) && layer.base) {
-            ceilingFt = layer.base.value;
-            break;
-          }
-        }
-      }
-
-      // ✅ Visibility in statute miles
-      const visibilitySm = props.visibility?.value
-        ? (props.visibility.value / 1609.34)
-        : null;
-
-      const flightCat = determineFlightCategory(ceilingFt, visibilitySm);
-
-      // ✅ Final displayed output
       tickerEl.className = "ticker " + flightCat;
       tickerEl.textContent = `${flightCat}: ${raw}`;
 
