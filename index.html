@@ -12,9 +12,8 @@
       height: 100%;
       overflow: hidden;
       background: black;
-      color: #00ff99;
       font-family: Arial, sans-serif;
-      font-size: 28px;
+      font-size: 40px; /* ✅ TV-friendly size */
     }
 
     #ticker-wrapper {
@@ -22,8 +21,8 @@
       bottom: 0;
       left: 0;
       right: 0;
-      height: 60px;
-      line-height: 60px;
+      height: 85px;        /* ✅ Taller for large text */
+      line-height: 85px;
       overflow: hidden;
       white-space: nowrap;
       background: black;
@@ -33,97 +32,89 @@
       display: inline-block;
       padding-left: 100%;
       will-change: transform;
-      animation: scroll 25s linear infinite;
+      animation: scroll 30s linear infinite; /* ✅ Slower for readability */
+      font-weight: 700;
+      text-shadow: 0 0 4px rgba(0,0,0,0.9); /* ✅ TV contrast boost */
     }
 
+    /* ✅ FAA Standard Flight Category Colors */
+    .VFR  { color: #00ff00; }   /* Green */
+    .MVFR { color: #00aaff; }   /* Blue */
+    .IFR  { color: #ff3333; }   /* Red */
+    .LIFR { color: #ff00ff; }   /* Magenta */
+    .UNK  { color: #aaaaaa; }   /* Gray fallback */
+
     @keyframes scroll {
-      from {
-        transform: translateX(0%);
-      }
-      to {
-        transform: translateX(-100%);
-      }
+      from { transform: translateX(0%); }
+      to   { transform: translateX(-100%); }
     }
   </style>
 </head>
 <body>
 
 <div id="ticker-wrapper">
-  <div class="ticker" id="ticker">Loading METAR…</div>
+  <div class="ticker UNK" id="ticker">Loading METAR…</div>
 </div>
 
 <script>
-  // CHANGE THIS TO YOUR AIRPORT ICAO, e.g. "KDEN", "KLEX"
+  // ✅ SINGLE AIRPORT FOREVER
   const station = "KAMW";
+
+  function determineFlightCategory(ceilingFt, visibilitySm) {
+    if (!ceilingFt && !visibilitySm) return "UNK";
+    if (ceilingFt <= 500 || visibilitySm < 1) return "LIFR";
+    if (ceilingFt <= 1000 || visibilitySm < 3) return "IFR";
+    if (ceilingFt <= 3000 || visibilitySm < 5) return "MVFR";
+    return "VFR";
+  }
 
   async function fetchMETAR() {
     const tickerEl = document.getElementById("ticker");
 
     try {
       const url = `https://api.weather.gov/stations/${station}/observations/latest`;
-
       const response = await fetch(url, {
         mode: "cors",
-        headers: {
-          "Accept": "application/geo+json"
-        }
+        headers: { "Accept": "application/geo+json" }
       });
 
-      if (!response.ok) {
-        throw new Error("HTTP " + response.status);
-      }
+      if (!response.ok) throw new Error("HTTP " + response.status);
 
       const data = await response.json();
-      const props = (data && data.properties) ? data.properties : {};
+      const props = data?.properties ?? {};
+      const raw = props.rawMessage || `METAR for ${station} unavailable`;
 
-      const raw = props.rawMessage || `No raw METAR available for ${station}`;
+      // ✅ Ceiling extraction
+      let ceilingFt = null;
+      if (props.cloudLayers?.length) {
+        for (const layer of props.cloudLayers) {
+          if (["BKN", "OVC", "VV"].includes(layer.amount) && layer.base) {
+            ceilingFt = layer.base.value;
+            break;
+          }
+        }
+      }
 
-      const windSpeedMs   = props.windSpeed && props.windSpeed.value;
-      const windDir       = props.windDirection && props.windDirection.value;
-      const visMeters     = props.visibility && props.visibility.value;
-      const tempC         = props.temperature && props.temperature.value;
-      const pressurePa    = props.barometricPressure && props.barometricPressure.value;
-      const timestamp     = props.timestamp;
+      // ✅ Visibility in statute miles
+      const visibilitySm = props.visibility?.value
+        ? (props.visibility.value / 1609.34)
+        : null;
 
-      const windKts = (windSpeedMs != null)
-        ? (windSpeedMs * 1.94384).toFixed(0)
-        : "N/A";
-      const windDirDeg = (windDir != null)
-        ? windDir.toFixed(0)
-        : "VRB";
-      const visSm = (visMeters != null)
-        ? (visMeters / 1609.34).toFixed(1)
-        : "N/A";
-      const tempStr = (tempC != null)
-        ? tempC.toFixed(1) + " °C"
-        : "N/A";
-      const altInHg = (pressurePa != null)
-        ? (pressurePa / 3386.39).toFixed(2)
-        : "N/A";
+      const flightCat = determineFlightCategory(ceilingFt, visibilitySm);
 
-      const timeStr = timestamp
-        ? new Date(timestamp).toUTCString()
-        : "";
-
-      const formatted =
-        `${station} | ${raw} ` +
-        `| Wind: ${windDirDeg}° @ ${windKts} kt ` +
-        `| Vis: ${visSm} SM ` +
-        `| Temp: ${tempStr} ` +
-        `| Alt: ${altInHg} inHg ` +
-        (timeStr ? `| Obs: ${timeStr}` : "");
-
-      tickerEl.textContent = formatted;
+      // ✅ Apply color + format exactly as requested
+      tickerEl.className = "ticker " + flightCat;
+      tickerEl.textContent = `${flightCat}: ${raw}`;
 
     } catch (err) {
       console.error("Error loading METAR:", err);
-      tickerEl.textContent = "Error loading METAR: " + err.message;
+      tickerEl.textContent = "Error loading METAR";
+      tickerEl.className = "ticker UNK";
     }
   }
 
-  // Initial load + periodic refresh
   fetchMETAR();
-  setInterval(fetchMETAR, 60000);
+  setInterval(fetchMETAR, 60000); // ✅ Refresh every 60 seconds
 </script>
 
 </body>
