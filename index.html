@@ -37,7 +37,6 @@
       text-shadow: 0 0 4px rgba(0,0,0,0.9);
     }
 
-    /* ✅ FAA Standard Flight Category Colors */
     .VFR  { color: #00ff00; }
     .MVFR { color: #00aaff; }
     .IFR  { color: #ff3333; }
@@ -57,24 +56,53 @@
 </div>
 
 <script>
-  const station = "KAMW"; // ✅ Single airport forever
+  const station = "KAMW";
+
+  function determineFlightCategory(ceilingFt, visibilitySm) {
+    if (ceilingFt == null && visibilitySm == null) return "UNK";
+    if (ceilingFt <= 500 || visibilitySm < 1) return "LIFR";
+    if (ceilingFt <= 1000 || visibilitySm < 3) return "IFR";
+    if (ceilingFt <= 3000 || visibilitySm < 5) return "MVFR";
+    return "VFR";
+  }
 
   async function fetchMETAR() {
     const tickerEl = document.getElementById("ticker");
 
     try {
-      const url = `https://aviationweather.gov/api/data/metar?ids=${station}&format=json`;
+      const metarUrl = `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${station}.TXT`;
+      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(metarUrl)}`;
 
-      const response = await fetch(url);
+      const response = await fetch(proxyUrl);
       if (!response.ok) throw new Error("HTTP " + response.status);
 
-      const data = await response.json();
-      if (!data.length) throw new Error("No METAR data");
+      const text = await response.text();
+      const lines = text.trim().split("\n");
 
-      const metar = data[0];
+      if (lines.length < 2) throw new Error("Invalid METAR format");
 
-      const raw = metar.rawOb;
-      const flightCat = metar.flightCat || "UNK";
+      const raw = lines[1].trim();
+
+      // ✅ Extract Visibility
+      let visibilitySm = null;
+      const visMatch = raw.match(/ (\d+|\d+\/\d+)SM/);
+      if (visMatch) {
+        if (visMatch[1].includes("/")) {
+          const [a,b] = visMatch[1].split("/").map(Number);
+          visibilitySm = a / b;
+        } else {
+          visibilitySm = parseFloat(visMatch[1]);
+        }
+      }
+
+      // ✅ Extract Ceiling (BKN / OVC / VV)
+      let ceilingFt = null;
+      const ceilMatch = raw.match(/ (BKN|OVC|VV)(\d{3})/);
+      if (ceilMatch) {
+        ceilingFt = parseInt(ceilMatch[2]) * 100;
+      }
+
+      const flightCat = determineFlightCategory(ceilingFt, visibilitySm);
 
       tickerEl.className = "ticker " + flightCat;
       tickerEl.textContent = `${flightCat}: ${raw}`;
