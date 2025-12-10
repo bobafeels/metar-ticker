@@ -66,24 +66,47 @@
     return "VFR";
   }
 
+  async function fetchFromSource(url, isText = true) {
+    const resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return isText ? await resp.text() : await resp.json();
+  }
+
   async function fetchMETAR() {
     const tickerEl = document.getElementById("ticker");
 
     try {
-      const metarUrl = `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${station}.TXT`;
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(metarUrl)}`;
+      // ✅ SOURCE 1 — NOAA via AllOrigins (fastest)
+      const primary = `https://api.allorigins.win/raw?url=${encodeURIComponent(
+        `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${station}.TXT`
+      )}`;
 
-      const response = await fetch(proxyUrl);
-      if (!response.ok) throw new Error("HTTP " + response.status);
+      let raw;
 
-      const text = await response.text();
-      const lines = text.trim().split("\n");
+      try {
+        const text = await fetchFromSource(primary, true);
+        const lines = text.trim().split("\n");
+        if (lines.length >= 2) raw = lines[1].trim();
+      } catch {}
 
-      if (lines.length < 2) throw new Error("Invalid METAR format");
+      // ✅ SOURCE 2 — FAA Digital Data (no proxy)
+      if (!raw) {
+        const backup = `https://aviationweather.gov/adds/dataserver_current/httpparam?dataSource=metars&requestType=retrieve&format=xml&stationString=${station}&mostRecent=true`;
+        const xmlText = await fetchFromSource(backup, true);
+        const match = xmlText.match(/<raw_text>(.*?)<\/raw_text>/);
+        if (match) raw = match[1];
+      }
 
-      const raw = lines[1].trim();
+      // ✅ SOURCE 3 — AVWX fallback
+      if (!raw) {
+        const fallback = `https://avwx.rest/api/metar/${station}?format=json`;
+        const data = await fetchFromSource(fallback, false);
+        raw = data.raw;
+      }
 
-      // ✅ Extract Visibility
+      if (!raw) throw new Error("All sources failed");
+
+      // ✅ Visibility extraction
       let visibilitySm = null;
       const visMatch = raw.match(/ (\d+|\d+\/\d+)SM/);
       if (visMatch) {
@@ -95,12 +118,10 @@
         }
       }
 
-      // ✅ Extract Ceiling (BKN / OVC / VV)
+      // ✅ Ceiling extraction
       let ceilingFt = null;
       const ceilMatch = raw.match(/ (BKN|OVC|VV)(\d{3})/);
-      if (ceilMatch) {
-        ceilingFt = parseInt(ceilMatch[2]) * 100;
-      }
+      if (ceilMatch) ceilingFt = parseInt(ceilMatch[2]) * 100;
 
       const flightCat = determineFlightCategory(ceilingFt, visibilitySm);
 
