@@ -58,24 +58,13 @@
 <script>
   const station = "KAMW";
 
-function determineFlightCategory(ceilingFt, visibilitySm) {
-  // If visibility is missing entirely, we can't classify
-  if (visibilitySm == null) return "UNK";
-
-  // No ceiling reported (CLR / SKC / NSC) → classify by visibility only
-  if (ceilingFt == null) {
-    if (visibilitySm < 1) return "LIFR";
-    if (visibilitySm < 3) return "IFR";
-    if (visibilitySm < 5) return "MVFR";
+  function determineFlightCategory(ceilingFt, visibilitySm) {
+    if (ceilingFt == null && visibilitySm == null) return "UNK";
+    if (ceilingFt <= 500 || visibilitySm < 1) return "LIFR";
+    if (ceilingFt <= 1000 || visibilitySm < 3) return "IFR";
+    if (ceilingFt <= 3000 || visibilitySm < 5) return "MVFR";
     return "VFR";
   }
-
-  // Ceiling present → use standard FAA rules
-  if (ceilingFt <= 500 || visibilitySm < 1) return "LIFR";
-  if (ceilingFt <= 1000 || visibilitySm < 3) return "IFR";
-  if (ceilingFt <= 3000 || visibilitySm < 5) return "MVFR";
-  return "VFR";
-}
 
   async function fetchFromSource(url, isText = true) {
     const resp = await fetch(url, { cache: "no-store" });
@@ -152,5 +141,4 @@ function determineFlightCategory(ceilingFt, visibilitySm) {
 
 </body>
 </html>
-
 
