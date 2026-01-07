@@ -72,9 +72,8 @@
    * CONFIG
    ***************/
   const STATION = "KAMW";
-
-  // ✅ Put your Cloudflare Worker URL here
-  const METAR_PROXY = "https://metar-ticker.sarah-cbauer11.workers.dev/";
+  const METAR_PROXY = "https://metar-ticker.sarah-cbauer11.workers.dev"; // no trailing slash needed
+  const REFRESH_MS = 60_000;
 
   let lastGoodRaw = null;
 
@@ -84,13 +83,35 @@
     return { ctrl, cleanup: () => clearTimeout(t) };
   }
 
+  function determineFlightCategory(ceilingFt, visibilitySm, raw) {
+    // If visibility is missing entirely, we can't classify
+    if (visibilitySm == null) return "UNK";
+
+    // Treat CLR/SKC/NSC/no-ceiling as "no ceiling" → classify by visibility only
+    const noCeilingToken = raw && /\b(CLR|SKC|NSC)\b/.test(raw);
+    if (ceilingFt == null || noCeilingToken) {
+      if (visibilitySm < 1) return "LIFR";
+      if (visibilitySm < 3) return "IFR";
+      if (visibilitySm < 5) return "MVFR";
+      return "VFR";
+    }
+
+    // Standard combined rules
+    if (ceilingFt <= 500 || visibilitySm < 1) return "LIFR";
+    if (ceilingFt <= 1000 || visibilitySm < 3) return "IFR";
+    if (ceilingFt <= 3000 || visibilitySm < 5) return "MVFR";
+    return "VFR";
+  }
+
   async function fetchMETAR() {
     const tickerEl = document.getElementById("ticker");
 
     try {
       if (!METAR_PROXY) throw new Error("METAR_PROXY not set");
 
-      const url = `${METAR_PROXY}?station=${encodeURIComponent(station)}`;
+      // ✅ FIX: STATION (not station)
+      const url = `${METAR_PROXY}?station=${encodeURIComponent(STATION)}`;
+
       const { ctrl, cleanup } = withTimeout(8000);
 
       let text;
@@ -104,7 +125,6 @@
 
       const lines = String(text).trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
       const raw = lines.find(l => /^(METAR|SPECI)\s/.test(l)) || null;
-
       if (!raw) throw new Error("No METAR line in proxy response");
 
       lastGoodRaw = raw;
@@ -128,12 +148,12 @@
       }
       if (visibilitySm == null && /\bCAVOK\b/.test(raw)) visibilitySm = 6;
 
-      // ✅ Ceiling extraction
+      // ✅ Ceiling extraction (BKN/OVC/VV)
       let ceilingFt = null;
       const ceilMatch = raw.match(/\s(BKN|OVC|VV)(\d{3})\b/);
       if (ceilMatch) ceilingFt = parseInt(ceilMatch[2], 10) * 100;
 
-      const flightCat = determineFlightCategory(ceilingFt, visibilitySm);
+      const flightCat = determineFlightCategory(ceilingFt, visibilitySm, raw);
 
       tickerEl.className = "ticker " + flightCat;
       tickerEl.textContent = `${flightCat}: ${raw}`;
@@ -141,10 +161,10 @@
     } catch (err) {
       console.error("Error loading METAR:", err);
 
-      // Keep last known good to avoid constant scary errors
+      // Keep last good if we have it
       if (lastGoodRaw) {
         tickerEl.className = tickerEl.className || "ticker UNK";
-        tickerEl.textContent = tickerEl.textContent || `${station}: ${lastGoodRaw}`;
+        tickerEl.textContent = `${tickerEl.textContent.includes(":") ? tickerEl.textContent.split(":")[0] : "UNK"}: ${lastGoodRaw}`;
       } else {
         tickerEl.className = "ticker UNK";
         tickerEl.textContent = "METAR connection error";
@@ -152,64 +172,13 @@
     }
   }
 
-
-  /***************
-   * MAIN
-   ***************/
-  const tickerEl = document.getElementById("ticker");
-  let lastGoodRaw = null;
-
-  async function fetchRawMetar() {
-    if (!METAR_PROXY || METAR_PROXY.includes("PASTE_YOUR_SCRIPT_URL_HERE")) {
-      throw new Error("METAR_PROXY not set");
-    }
-
-    const url = `${METAR_PROXY}?station=${encodeURIComponent(STATION)}`;
-
-    const { ctrl, cleanup } = withTimeout(FETCH_TIMEOUT_MS);
-    try {
-      const resp = await fetch(url, { cache: "no-store", signal: ctrl.signal });
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      const txt = await resp.text();
-      const raw = parseNoaaTxtToRawMetar(txt);
-      if (!raw) throw new Error("No METAR line in response");
-      return raw;
-    } finally {
-      cleanup();
-    }
-  }
-
-  function renderFromRaw(raw) {
-    const visibilitySm = parseVisibilitySm(raw);
-    const ceilingFt = parseCeilingFt(raw);
-    const cat = determineFlightCategory(ceilingFt, visibilitySm, raw);
-
-    tickerEl.className = "ticker " + cat;
-    tickerEl.textContent = `${cat}: ${raw}`;
-  }
-
-  async function update() {
-    try {
-      const raw = await fetchRawMetar();
-      lastGoodRaw = raw;
-      renderFromRaw(raw);
-    } catch (err) {
-      console.error("METAR update failed:", err);
-
-      // Fail gracefully: keep last known good, don’t spam scary message if we can avoid it
-      if (lastGoodRaw) {
-        renderFromRaw(lastGoodRaw);
-      } else {
-        tickerEl.className = "ticker UNK";
-        tickerEl.textContent = "METAR connection error";
-      }
-    }
-  }
-
-  update();
-  setInterval(update, REFRESH_MS);
+  // ✅ Run it
+  fetchMETAR();
+  setInterval(fetchMETAR, REFRESH_MS);
 </script>
+
 
 </body>
 </html>
+
 
