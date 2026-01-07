@@ -1,1 +1,181 @@
-<!DOCTYPE html> <html lang="en"> <head> <meta charset="UTF-8" /> <title>Live METAR Ticker</title> <meta name="viewport" content="width=device-width, initial-scale=1.0" /> <style> html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: transparent; font-family: Arial, sans-serif; font-size: 40px; } #ticker-wrapper { position: fixed; bottom: 0; left: 0; right: 0; height: 85px; line-height: 85px; overflow: hidden; white-space: nowrap; background: transparent; } .ticker { display: inline-block; padding-left: 100%; will-change: transform; animation: scroll 30s linear infinite; font-weight: 700; text-shadow: 0 0 4px rgba(0,0,0,0.9); } .VFR { color: #35C42E; } .MVFR { color: #35C42E; } .IFR { color: #F53316; } .LIFR { color: #F949FA; } .UNK { color: #BDBDBD; } @keyframes scroll { from { transform: translateX(0%); } to { transform: translateX(-100%); } } </style> </head> <body> <div id="ticker-wrapper"> <div class="ticker UNK" id="ticker">Loading METAR…</div> </div> <script> const station = "KAMW"; function determineFlightCategory(ceilingFt, visibilitySm) { // If visibility is missing entirely, we can't classify if (visibilitySm == null) return "UNK"; // No ceiling reported (CLR / SKC / NSC) → classify by visibility only if (ceilingFt == null) { if (visibilitySm < 1) return "LIFR"; if (visibilitySm < 3) return "IFR"; if (visibilitySm < 5) return "MVFR"; return "VFR"; } // Ceiling present → use standard FAA rules if (ceilingFt <= 500 || visibilitySm < 1) return "LIFR"; if (ceilingFt <= 1000 || visibilitySm < 3) return "IFR"; if (ceilingFt <= 3000 || visibilitySm < 5) return "MVFR"; return "VFR"; } async function fetchFromSource(url, isText = true) { const resp = await fetch(url, { cache: "no-store" }); if (!resp.ok) throw new Error("HTTP " + resp.status); return isText ? await resp.text() : await resp.json(); } async function fetchMETAR() { const tickerEl = document.getElementById("ticker"); try { // ✅ SOURCE 1 — NOAA via AllOrigins (fastest) const primary = https://api.allorigins.win/raw?url=${encodeURIComponent( https://tgftp.nws.noaa.gov/data/observations/metar/stations/${station}.TXT )}; let raw; try { const text = await fetchFromSource(primary, true); const lines = text.trim().split("\n"); if (lines.length >= 2) raw = lines[1].trim(); } catch {} // ✅ SOURCE 2 — FAA Digital Data (no proxy) if (!raw) { const backup = https://aviationweather.gov/adds/dataserver_current/httpparam?dataSource=metars&requestType=retrieve&format=xml&stationString=${station}&mostRecent=true; const xmlText = await fetchFromSource(backup, true); const match = xmlText.match(/<raw_text>(.*?)<\/raw_text>/); if (match) raw = match[1]; } // ✅ SOURCE 3 — AVWX fallback if (!raw) { const fallback = https://avwx.rest/api/metar/${station}?format=json; const data = await fetchFromSource(fallback, false); raw = data.raw; } if (!raw) throw new Error("All sources failed"); // ✅ Visibility extraction let visibilitySm = null; const visMatch = raw.match(/ (\d+|\d+\/\d+)SM/); if (visMatch) { if (visMatch[1].includes("/")) { const [a,b] = visMatch[1].split("/").map(Number); visibilitySm = a / b; } else { visibilitySm = parseFloat(visMatch[1]); } } // ✅ Ceiling extraction let ceilingFt = null; const ceilMatch = raw.match(/ (BKN|OVC|VV)(\d{3})/); if (ceilMatch) ceilingFt = parseInt(ceilMatch[2]) * 100; const flightCat = determineFlightCategory(ceilingFt, visibilitySm); tickerEl.className = "ticker " + flightCat; tickerEl.textContent = ${flightCat}: ${raw}; } catch (err) { console.error("Error loading METAR:", err); tickerEl.className = "ticker UNK"; tickerEl.textContent = "METAR connection error"; } } fetchMETAR(); setInterval(fetchMETAR, 60000); </script> </body> </html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Live METAR Ticker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: Arial, sans-serif;
+      font-size: 40px;
+    }
+
+    #ticker-wrapper {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 85px;
+      line-height: 85px;
+      overflow: hidden;
+      white-space: nowrap;
+      background: transparent;
+    }
+
+    .ticker {
+      display: inline-block;
+      padding-left: 100%;
+      will-change: transform;
+      animation: scroll 30s linear infinite;
+      font-weight: 700;
+      text-shadow: 0 0 4px rgba(0,0,0,0.9);
+    }
+
+    .VFR  { color: #35C42E; }
+    .MVFR { color: #35C42E; }
+    .IFR  { color: #F53316; }
+    .LIFR { color: #F949FA; }
+    .UNK  { color: #BDBDBD; }
+
+    @keyframes scroll {
+      from { transform: translateX(0%); }
+      to   { transform: translateX(-100%); }
+    }
+  </style>
+</head>
+<body>
+
+<div id="ticker-wrapper">
+  <div class="ticker UNK" id="ticker">Loading METAR…</div>
+</div>
+
+<script>
+  const station = "KAMW";
+
+  // ✅ Paste your Google Apps Script Web App URL here
+  // Example:
+  // const METAR_PROXY = "https://script.google.com/macros/s/XXXXX/exec";
+  const METAR_PROXY = "https://script.google.com/macros/s/AKfycbwQxxvilz8uUQ16WXREBW82H5FKneH7pn0JL-Cj7jsHkOjNS70wPfwDg6dRQxl_m1G_uQ/exec";
+
+function determineFlightCategory(ceilingFt, visibilitySm) {
+  // If visibility is missing entirely, we can't classify
+  if (visibilitySm == null) return "UNK";
+
+  // No ceiling reported (CLR / SKC / NSC) → classify by visibility only
+  if (ceilingFt == null) {
+    if (visibilitySm < 1) return "LIFR";
+    if (visibilitySm < 3) return "IFR";
+    if (visibilitySm < 5) return "MVFR";
+    return "VFR";
+  }
+
+  // Ceiling present → use standard FAA rules
+  if (ceilingFt <= 500 || visibilitySm < 1) return "LIFR";
+  if (ceilingFt <= 1000 || visibilitySm < 3) return "IFR";
+  if (ceilingFt <= 3000 || visibilitySm < 5) return "MVFR";
+  return "VFR";
+}
+
+  // Keep last good result so transient network hiccups don't show "connection error"
+  let lastGoodRaw = null;
+
+  async function fetchFromSource(url, isText = true, timeoutMs = 8000) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
+    try {
+      const resp = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      return isText ? await resp.text() : await resp.json();
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async function fetchMETAR() {
+    const tickerEl = document.getElementById("ticker");
+
+    try {
+      if (!METAR_PROXY || METAR_PROXY.includes("PASTE_YOUR_SCRIPT_URL_HERE")) {
+        throw new Error("METAR_PROXY not set");
+      }
+
+      // Single reliable source (your proxy)
+      const url = `${METAR_PROXY}?station=${encodeURIComponent(station)}`;
+
+      const text = await fetchFromSource(url, true, 8000);
+      const lines = String(text).trim().split("\n");
+
+      // NOAA TXT format: line 1 = timestamp, line 2 = raw METAR
+      const raw = (lines.length >= 2) ? lines[1].trim() : null;
+      if (!raw || !raw.includes("METAR")) throw new Error("Invalid METAR response");
+
+      lastGoodRaw = raw;
+
+      // ✅ Visibility extraction
+      let visibilitySm = null;
+      const visMatch = raw.match(/ (\d+|\d+\/\d+)SM/);
+      if (visMatch) {
+        if (visMatch[1].includes("/")) {
+          const [a, b] = visMatch[1].split("/").map(Number);
+          visibilitySm = a / b;
+        } else {
+          visibilitySm = parseFloat(visMatch[1]);
+        }
+      }
+
+      // ✅ Ceiling extraction (only BKN/OVC/VV define a ceiling)
+      let ceilingFt = null;
+      const ceilMatch = raw.match(/ (BKN|OVC|VV)(\d{3})/);
+      if (ceilMatch) ceilingFt = parseInt(ceilMatch[2], 10) * 100;
+
+      const flightCat = determineFlightCategory(ceilingFt, visibilitySm);
+
+      tickerEl.className = "ticker " + flightCat;
+      tickerEl.textContent = `${flightCat}: ${raw}`;
+
+    } catch (err) {
+      console.error("Error loading METAR:", err);
+
+      // If we have a prior good METAR, keep displaying it (better UX than "connection error")
+      if (lastGoodRaw) {
+        // Recompute category from the lastGoodRaw so colors stay correct
+        let visibilitySm = null;
+        const visMatch = lastGoodRaw.match(/ (\d+|\d+\/\d+)SM/);
+        if (visMatch) {
+          if (visMatch[1].includes("/")) {
+            const [a, b] = visMatch[1].split("/").map(Number);
+            visibilitySm = a / b;
+          } else {
+            visibilitySm = parseFloat(visMatch[1]);
+          }
+        }
+
+        let ceilingFt = null;
+        const ceilMatch = lastGoodRaw.match(/ (BKN|OVC|VV)(\d{3})/);
+        if (ceilMatch) ceilingFt = parseInt(ceilMatch[2], 10) * 100;
+
+        const flightCat = determineFlightCategory(ceilingFt, visibilitySm);
+
+        tickerEl.className = "ticker " + flightCat;
+        tickerEl.textContent = `${flightCat}: ${lastGoodRaw}`;
+      } else {
+        tickerEl.className = "ticker UNK";
+        tickerEl.textContent = "METAR connection error";
+      }
+    }
+  }
+
+  // Initial load + periodic refresh
+  fetchMETAR();
+  setInterval(fetchMETAR, 60000);
+</script>
+
+</body>
+</html>
