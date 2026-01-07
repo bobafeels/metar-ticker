@@ -137,11 +137,23 @@
     return m ? parseInt(m[2], 10) * 100 : null;
   }
 
-  function parseRawMetarFromText(txt) {
-    const lines = String(txt).trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    // Find METAR/SPECI line anywhere in response
-    return lines.find(l => /^(METAR|SPECI)\s/.test(l)) || null;
-  }
+function parseRawMetarFromText(txt) {
+  const lines = String(txt).trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+
+  // 1) Preferred: explicit METAR/SPECI lines
+  let raw = lines.find(l => /^(METAR|SPECI)\s/.test(l));
+  if (raw) return raw;
+
+  // 2) Common NOAA station TXT format: starts with the station id (no "METAR" token)
+  raw = lines.find(l => new RegExp("^" + STATION + "\\s").test(l));
+  if (raw) return "METAR " + raw; // normalize to your preferred display format
+
+  // 3) Fallback: any line containing " STATION " and a Zulu timestamp like 071353Z
+  raw = lines.find(l => new RegExp("\\b" + STATION + "\\b").test(l) && /\b\d{6}Z\b/.test(l));
+  if (raw) return raw.startsWith("METAR") || raw.startsWith("SPECI") ? raw : ("METAR " + raw);
+
+  return null;
+}
 
   async function fetchWithTimeout(url) {
     const ctrl = new AbortController();
@@ -200,6 +212,7 @@
 </script>
 </body>
 </html>
+
 
 
 
