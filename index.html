@@ -61,35 +61,38 @@
     }
   </style>
 </head>
-<body>
 
+<body>
   <div id="ticker-wrapper">
     <div class="ticker UNK" id="ticker">Loading METAR…</div>
   </div>
 
 <script>
 (() => {
+  /***************
+   * CONFIG
+   ***************/
   const STATION = "KAMW";
-  const METAR_PROXY = "https://metar-ticker.sarah-cbauer11.workers.dev/"; // keep your URL
-  const REFRESH_MS = 60000;
-  const TIMEOUT_MS = 8000;
+  const METAR_PROXY = "https://metar-ticker.sarah-cbauer11.workers.dev"; // ✅ no need for trailing slash
+  const REFRESH_MS = 60_000;
+  const TIMEOUT_MS = 8_000;
 
   let lastGoodRaw = null;
 
-  function setStatus(text, cls = "UNK") {
+  function setTicker(text, cls = "UNK") {
     const el = document.getElementById("ticker");
     if (!el) return;
     el.className = "ticker " + cls;
     el.textContent = text;
   }
 
-  // Show any uncaught errors on-screen (this is the key debugging tool)
+  // If anything blows up, show it on-screen instead of freezing on "Loading…"
   window.addEventListener("error", (e) => {
-    setStatus("JS error: " + (e.message || "unknown"), "UNK");
+    setTicker("JS error: " + (e.message || "unknown"), "UNK");
   });
   window.addEventListener("unhandledrejection", (e) => {
     const msg = (e.reason && (e.reason.message || String(e.reason))) || "promise rejection";
-    setStatus("Promise error: " + msg, "UNK");
+    setTicker("Promise error: " + msg, "UNK");
   });
 
   function determineFlightCategory(ceilingFt, visibilitySm, raw) {
@@ -109,9 +112,29 @@
     return "VFR";
   }
 
+  function parseRawMetarFromNoaaTxt(txt) {
+    const lines = String(txt).trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+
+    // Most common NOAA TXT format:
+    // line 1: timestamp
+    // line 2: "KAMW 071353Z AUTO ...", often without "METAR"
+    // but sometimes it can include METAR/SPECI.
+    let raw = lines.find(l => /^(METAR|SPECI)\s/.test(l));
+    if (raw) return raw;
+
+    raw = lines.find(l => l.startsWith(STATION + " "));
+    if (raw) return "METAR " + raw; // normalize to your preferred display format
+
+    // fallback: any line that contains station and a 6-digit Z time
+    raw = lines.find(l => l.includes(STATION) && /\b\d{6}Z\b/.test(l));
+    if (raw) return raw.startsWith("METAR") || raw.startsWith("SPECI") ? raw : ("METAR " + raw);
+
+    return null;
+  }
+
   function parseVisibilitySm(raw) {
     // P6SM
-    let m = raw.match(/\s(P6)SM\b/);
+    let m = raw.match(/\sP6SM\b/);
     if (m) return 6;
 
     // "2 1/2SM"
@@ -126,7 +149,6 @@
     m = raw.match(/\s(\d+)SM\b/);
     if (m) return Number(m[1]);
 
-    // CAVOK (treat as good vis for category thresholds)
     if (/\bCAVOK\b/.test(raw)) return 6;
 
     return null;
@@ -136,24 +158,6 @@
     const m = raw.match(/\s(BKN|OVC|VV)(\d{3})\b/);
     return m ? parseInt(m[2], 10) * 100 : null;
   }
-
-function parseRawMetarFromText(txt) {
-  const lines = String(txt).trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-
-  // 1) Preferred: explicit METAR/SPECI lines
-  let raw = lines.find(l => /^(METAR|SPECI)\s/.test(l));
-  if (raw) return raw;
-
-  // 2) Common NOAA station TXT format: starts with the station id (no "METAR" token)
-  raw = lines.find(l => new RegExp("^" + STATION + "\\s").test(l));
-  if (raw) return "METAR " + raw; // normalize to your preferred display format
-
-  // 3) Fallback: any line containing " STATION " and a Zulu timestamp like 071353Z
-  raw = lines.find(l => new RegExp("\\b" + STATION + "\\b").test(l) && /\b\d{6}Z\b/.test(l));
-  if (raw) return raw.startsWith("METAR") || raw.startsWith("SPECI") ? raw : ("METAR " + raw);
-
-  return null;
-}
 
   async function fetchWithTimeout(url) {
     const ctrl = new AbortController();
@@ -168,16 +172,20 @@ function parseRawMetarFromText(txt) {
 
   async function update() {
     try {
-      setStatus("Fetching METAR…", "UNK");
+      setTicker("Fetching METAR…", "UNK");
 
-      if (!METAR_PROXY) throw new Error("METAR_PROXY not set");
       const url = `${METAR_PROXY}?station=${encodeURIComponent(STATION)}`;
-
       const resp = await fetchWithTimeout(url);
       if (!resp.ok) throw new Error("HTTP " + resp.status);
 
-      const text = await resp.text();
-      const raw = parseRawMetarFromText(text);
+      const txt = await resp.text();
+
+      // If we ever fetch code instead of data, call it out loudly.
+      if (/^\s*export\s+default\b/.test(txt)) {
+        throw new Error("Proxy returned Worker source code (wrong endpoint)");
+      }
+
+      const raw = parseRawMetarFromNoaaTxt(txt);
       if (!raw) throw new Error("No METAR line in proxy response");
 
       lastGoodRaw = raw;
@@ -186,33 +194,25 @@ function parseRawMetarFromText(txt) {
       const ceil = parseCeilingFt(raw);
       const cat = determineFlightCategory(ceil, vis, raw);
 
-      setStatus(`${cat}: ${raw}`, cat);
+      setTicker(`${cat}: ${raw}`, cat);
 
     } catch (err) {
-      const msg = err && (err.message || String(err));
+      console.error("METAR update failed:", err);
 
-      // If we have a last-good METAR, keep showing it instead of a scary blank/error
       if (lastGoodRaw) {
         const vis = parseVisibilitySm(lastGoodRaw);
         const ceil = parseCeilingFt(lastGoodRaw);
         const cat = determineFlightCategory(ceil, vis, lastGoodRaw);
-        setStatus(`${cat}: ${lastGoodRaw}`, cat);
+        setTicker(`${cat}: ${lastGoodRaw}`, cat);
       } else {
-        // IMPORTANT: show the real reason on screen so we can fix it
-        setStatus("METAR error: " + msg, "UNK");
+        setTicker("METAR error: " + (err.message || String(err)), "UNK");
       }
     }
   }
 
-  document.addEventListener("DOMContentLoaded", () => {
-    update();
-    setInterval(update, REFRESH_MS);
-  });
+  update();
+  setInterval(update, REFRESH_MS);
 })();
 </script>
 </body>
 </html>
-
-
-
-
