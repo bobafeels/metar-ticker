@@ -73,89 +73,85 @@
    ***************/
   const STATION = "KAMW";
 
-  // Paste your Apps Script Web App URL here:
-  const METAR_PROXY = "https://script.google.com/macros/s/AKfycbxmZd_AmVQ-9We70Gl3Ux6zKZSCWC7n-u37WHR_rbTeM65iYwDn2aM-Zr95uN4QfT3Ovw/exec"; // e.g. https://script.google.com/macros/s/XXXXX/exec
+  // ✅ Put your Cloudflare Worker URL here
+  const METAR_PROXY = "https://metar-ticker.sarah-cbauer11.workers.dev/";
 
-  const REFRESH_MS = 60_000;
-  const FETCH_TIMEOUT_MS = 8_000;
+  let lastGoodRaw = null;
 
-  /***************
-   * HELPERS
-   ***************/
   function withTimeout(ms) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), ms);
-    return { ctrl, cleanup: () => clearTimeout(timer) };
+    const t = setTimeout(() => ctrl.abort(), ms);
+    return { ctrl, cleanup: () => clearTimeout(t) };
   }
 
-  function parseNoaaTxtToRawMetar(txt) {
-    // NOAA TXT is usually 2 lines:
-    // 1) YYYY/MM/DD HH:MM
-    // 2) METAR KXXX ... OR SPECI KXXX ...
-    const lines = String(txt).trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    if (lines.length < 1) return null;
+  async function fetchMETAR() {
+    const tickerEl = document.getElementById("ticker");
 
-    // Prefer the first line that looks like METAR/SPECI
-    const metarLine = lines.find(l => /^((METAR|SPECI)\s+)/.test(l));
-    return metarLine || null;
-  }
+    try {
+      if (!METAR_PROXY) throw new Error("METAR_PROXY not set");
 
-  function parseVisibilitySm(raw) {
-    // Handles: "10SM", "1/2SM", "2 1/2SM", "P6SM"
-    // We'll return a number or null.
-    // P6SM => treat as 6.0 (good enough for category thresholds)
-    let m = raw.match(/\s(P6)SM\b/);
-    if (m) return 6;
+      const url = `${METAR_PROXY}?station=${encodeURIComponent(station)}`;
+      const { ctrl, cleanup } = withTimeout(8000);
 
-    // "2 1/2SM"
-    m = raw.match(/\s(\d+)\s(\d+)\/(\d+)SM\b/);
-    if (m) return Number(m[1]) + (Number(m[2]) / Number(m[3]));
+      let text;
+      try {
+        const resp = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        text = await resp.text();
+      } finally {
+        cleanup();
+      }
 
-    // "1/2SM"
-    m = raw.match(/\s(\d+)\/(\d+)SM\b/);
-    if (m) return Number(m[1]) / Number(m[2]);
+      const lines = String(text).trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      const raw = lines.find(l => /^(METAR|SPECI)\s/.test(l)) || null;
 
-    // "10SM"
-    m = raw.match(/\s(\d+)SM\b/);
-    if (m) return Number(m[1]);
+      if (!raw) throw new Error("No METAR line in proxy response");
 
-    // CAVOK often implies >=10km vis; for US METAR it’s rare but we’ll treat as VFR vis
-    if (/\bCAVOK\b/.test(raw)) return 6;
+      lastGoodRaw = raw;
 
-    return null;
-  }
+      // ✅ Visibility extraction
+      let visibilitySm = null;
+      let m = raw.match(/\s(P6)SM\b/);
+      if (m) visibilitySm = 6;
 
-  function parseCeilingFt(raw) {
-    // Ceiling defined only by BKN/OVC/VV lowest layer
-    // Example: BKN015 => 1500 ft
-    const m = raw.match(/\s(BKN|OVC|VV)(\d{3})\b/);
-    if (!m) return null;
-    return parseInt(m[2], 10) * 100;
-  }
+      if (visibilitySm == null) {
+        m = raw.match(/\s(\d+)\s(\d+)\/(\d+)SM\b/); // 2 1/2SM
+        if (m) visibilitySm = Number(m[1]) + (Number(m[2]) / Number(m[3]));
+      }
+      if (visibilitySm == null) {
+        m = raw.match(/\s(\d+)\/(\d+)SM\b/); // 1/2SM
+        if (m) visibilitySm = Number(m[1]) / Number(m[2]);
+      }
+      if (visibilitySm == null) {
+        m = raw.match(/\s(\d+)SM\b/); // 10SM
+        if (m) visibilitySm = Number(m[1]);
+      }
+      if (visibilitySm == null && /\bCAVOK\b/.test(raw)) visibilitySm = 6;
 
-  function hasClearSkyToken(raw) {
-    // CLR / SKC / NSC = no ceiling (i.e., ceilingFt null)
-    return /\b(CLR|SKC|NSC)\b/.test(raw);
-  }
+      // ✅ Ceiling extraction
+      let ceilingFt = null;
+      const ceilMatch = raw.match(/\s(BKN|OVC|VV)(\d{3})\b/);
+      if (ceilMatch) ceilingFt = parseInt(ceilMatch[2], 10) * 100;
 
-  function determineFlightCategory(ceilingFt, visibilitySm, raw) {
-    // If visibility missing, we can't classify reliably
-    if (visibilitySm == null) return "UNK";
+      const flightCat = determineFlightCategory(ceilingFt, visibilitySm);
 
-    // If no ceiling (either ceilingFt null OR explicit CLR/SKC/NSC), classify by visibility only
-    if (ceilingFt == null || (raw && hasClearSkyToken(raw))) {
-      if (visibilitySm < 1) return "LIFR";
-      if (visibilitySm < 3) return "IFR";
-      if (visibilitySm < 5) return "MVFR";
-      return "VFR";
+      tickerEl.className = "ticker " + flightCat;
+      tickerEl.textContent = `${flightCat}: ${raw}`;
+
+    } catch (err) {
+      console.error("Error loading METAR:", err);
+
+      // Keep last known good to avoid constant scary errors
+      if (lastGoodRaw) {
+        tickerEl.className = tickerEl.className || "ticker UNK";
+        tickerEl.textContent = tickerEl.textContent || `${station}: ${lastGoodRaw}`;
+      } else {
+        tickerEl.className = "ticker UNK";
+        tickerEl.textContent = "METAR connection error";
+      }
     }
-
-    // Standard combined rules
-    if (ceilingFt <= 500 || visibilitySm < 1) return "LIFR";
-    if (ceilingFt <= 1000 || visibilitySm < 3) return "IFR";
-    if (ceilingFt <= 3000 || visibilitySm < 5) return "MVFR";
-    return "VFR";
   }
+
 
   /***************
    * MAIN
@@ -216,3 +212,4 @@
 
 </body>
 </html>
+
